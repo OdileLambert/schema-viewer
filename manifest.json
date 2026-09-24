@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "SEO Inspector",
   "version": "1.1.0",
-  "description": "页面 SEO 检查工具：Content / Indexability / Schema Markup / Links 四合一",
-  "permissions": ["activeTab", "scripting", "webRequest"],
+  "description": "页面 SEO 检查工具，含浏览器访问状态码与重定向记录",
+  "permissions": ["activeTab", "scripting", "webRequest", "webNavigation", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"

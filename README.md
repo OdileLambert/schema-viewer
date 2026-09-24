@@ -10,6 +10,7 @@
 2. **Indexability** — Canonical URL（Raw HTML / Rendered 对比）、Robots Meta Tag、Hreflangs
 3. **Schema Markup** — JSON-LD / Microdata / RDFa 结构化数据查看、折叠、复制（支持 `@graph` 嵌套实体递归展开）
 4. **Links** — 批量检测页面所有 `<a href>` 跳转链接的 HTTP 状态码（2xx / 3xx / 4xx / 5xx / 网络错误），展示完整跳转链与最终 URL，支持按状态筛选与一键复制
+5. **访问记录** — 展示当前标签页最近一次主页面访问的 HTTP 状态码、服务器重定向路径和最终 URL；同一标签页再次访问会覆盖上次结果，关闭标签页时清除
 
 ### Links 检测说明
 
@@ -22,6 +23,7 @@
 
 - 扩展身份发起的请求可能被站点风控（Cloudflare 等）返回 403/405，造成误报；
 - 纯 JS 跳转（无 `href`、仅 `onclick`）的链接无法检测；
+- 访问记录中的 HTTP code 来自浏览器主框架网络请求；从缓存/BFCache 恢复且没有网络响应的访问会显示为未知状态；
 - 登录态页面以匿名身份请求（`credentials: omit`），结果可能与本人浏览不同；
 - 页面链接较多时检测耗时较长（界面有进度提示）。
 

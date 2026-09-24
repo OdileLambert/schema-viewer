@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const linksStartEl = document.getElementById('links-start');
   const linksToolbarEl = document.getElementById('links-toolbar');
   const linksSummaryEl = document.getElementById('links-summary');
+  const visitsSummaryEl = document.getElementById('visits-summary');
+  const visitsListEl = document.getElementById('visits-list');
 
   // Tab state
   let currentTab = 'content';
@@ -27,6 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let linkSnapshotStats = null;
   let linkScanMode = 'standard';
   let linkFilter = 'all';
+  let navigationRecord = null;
+  let visitsLoading = false;
 
   // ──── Tab Switching ────
   document.querySelectorAll('.tabs-sidebar .tab').forEach(tab => {
@@ -38,6 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById(`tab-${currentTab}`).classList.add('active');
       updateActionButton();
       if (currentTab === 'links') renderLinksTab();
+      if (currentTab === 'visits') loadNavigationHistory();
     });
   });
 
@@ -74,7 +79,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // ──── Initial Load ────
   loadAllData();
 
-  refreshBtn.addEventListener('click', loadAllData);
+  refreshBtn.addEventListener('click', () => {
+    if (currentTab === 'visits') loadNavigationHistory();
+    else loadAllData();
+  });
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'session' || !changes.navigationRecords) return;
+    if (currentTab === 'visits' && !visitsLoading) loadNavigationHistory();
+  });
   actionBtn.addEventListener('click', handleActionClick);
 
   // ──── Main Load ────
@@ -122,6 +135,75 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('Error:', error);
       showStatus(`提取失败: ${error.message}`, 'error');
     }
+  }
+
+  async function loadNavigationHistory() {
+    if (visitsLoading) return;
+    visitsLoading = true;
+    visitsListEl.innerHTML = '<div class="visit-empty">正在读取浏览器访问记录…</div>';
+
+    try {
+      const tab = await getTargetTab();
+      if (!tab) throw new Error('无法识别当前标签页');
+      const response = await chrome.runtime.sendMessage({ type: 'get-navigation-history', tabId: tab.id });
+      if (response && response.error) throw new Error(response.error);
+      navigationRecord = (response && response.record) || null;
+      renderNavigationHistory();
+    } catch (error) {
+      visitsSummaryEl.textContent = '';
+      visitsListEl.innerHTML = `<div class="visit-empty">读取访问记录失败：${escHtml(error.message || '')}</div>`;
+    } finally {
+      visitsLoading = false;
+    }
+  }
+
+  function renderNavigationHistory() {
+    const record = navigationRecord;
+    visitsSummaryEl.innerHTML = '<span>当前标签页最近一次主页面访问</span><span>再次访问同一标签页时会覆盖结果</span>';
+
+    if (!record) {
+      visitsListEl.innerHTML = `
+        <div class="visit-empty">
+          <div class="icon">🧭</div>
+          <p>当前标签页还没有可显示的访问结果</p>
+          <p class="hint">Reload 扩展后访问或刷新页面，结果会显示在这里。</p>
+        </div>
+      `;
+      return;
+    }
+
+    const statusText = record.finalStatus != null
+      ? String(record.finalStatus)
+      : (record.state === 'error' ? 'ERR' : (record.state === 'loading' ? '进行中' : '—'));
+    const statusClass = record.state === 'error'
+      ? 'visit-status-error'
+      : (record.finalStatus >= 200 && record.finalStatus < 400 ? 'visit-status-ok' : (record.finalStatus != null ? 'visit-status-error' : 'visit-status-unknown'));
+    const dateText = new Date(record.startedAt).toLocaleString();
+    const redirectSteps = (record.redirects || []).map(hop => `
+        <div class="visit-hop">
+          <span class="visit-hop-code">${escHtml(String(hop.statusCode))}</span>
+          <span class="visit-hop-url">${escHtml(hop.redirectUrl || '')}</span>
+        </div>
+      `).join('');
+    const finalStep = record.redirects && record.redirects.length
+      ? `<div class="visit-hop visit-final-hop"><span class="visit-hop-code ${statusClass}">${escHtml(statusText)}</span><span class="visit-hop-url">${escHtml(record.finalUrl || '')}</span></div>`
+      : '';
+    const errorText = record.error ? `<div class="visit-error">${escHtml(record.error)}</div>` : '';
+    const qualifier = (record.transitionQualifiers || []).includes('client_redirect')
+      ? '<span class="visit-qualifier">页面脚本跳转</span>'
+      : '';
+
+    visitsListEl.innerHTML = `
+        <article class="visit-item">
+          <div class="visit-item-head">
+            <span class="visit-status ${statusClass}">${escHtml(statusText)}</span>
+            <span class="visit-time">${escHtml(dateText)} ${qualifier}</span>
+          </div>
+          <div class="visit-original-url">${escHtml(record.url || '')}</div>
+          ${redirectSteps ? `<div class="visit-redirects">${redirectSteps}${finalStep}</div>` : ''}
+          ${errorText}
+        </article>
+      `;
   }
 
   // ──── Page-level extraction function ────
@@ -1027,6 +1109,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ──── Action button (copies current tab data) ────
   function updateActionButton() {
+    if (currentTab === 'visits') {
+      actionBtn.classList.add('hidden');
+      return;
+    }
+
     if (!dataLoaded || !pageData) {
       actionBtn.classList.add('hidden');
       return;
@@ -1055,6 +1142,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function handleActionClick() {
+    if (currentTab === 'visits') return;
     if (!dataLoaded || !pageData) return;
 
     let text = '';

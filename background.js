@@ -7,6 +7,25 @@
 // Keyed by normalized URL so concurrent checks don't collide.
 const ENTRY_TTL = 60 * 1000; // drop stale entries after 60s
 const redirectMap = new Map();   // url -> { status, to, ts }
+let navigationRecords = [];
+let navigationQueue = Promise.resolve();
+const navigationReady = chrome.storage.session.get('navigationRecords').then(({ navigationRecords: saved }) => {
+  navigationRecords = Array.isArray(saved) ? saved : [];
+});
+
+function updateNavigationHistory(updater) {
+  navigationQueue = navigationQueue
+    .then(() => navigationReady)
+    .then(async () => {
+      updater(navigationRecords);
+      navigationRecords = navigationRecords
+        .sort((a, b) => b.startedAt - a.startedAt)
+        .filter((item, index, records) => records.findIndex((candidate) => candidate.tabId === item.tabId) === index);
+      await chrome.storage.session.set({ navigationRecords });
+    })
+    .catch((error) => console.error('[SEO Inspector] navigation history update failed', error));
+  return navigationQueue;
+}
 
 function norm(u) {
   try { return new URL(u).href; } catch (e) { return u; }
@@ -24,6 +43,155 @@ chrome.webRequest.onBeforeRedirect.addListener(
   },
   { urls: ["<all_urls>"] }
 );
+
+// ──── Browser main-frame navigation history ────
+// Record only real top-level document requests from browser tabs. Background
+// link-check fetches have tabId -1 and are excluded from this history.
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    if (details.tabId < 0 || details.frameId !== 0) return;
+    if (!/^https?:/i.test(details.url)) return;
+
+    const record = {
+      id: details.requestId,
+      tabId: details.tabId,
+      url: details.url,
+      currentUrl: details.url,
+      finalUrl: details.url,
+      startedAt: details.timeStamp || Date.now(),
+      completedAt: null,
+      finalStatus: null,
+      redirects: [],
+      state: 'loading',
+      error: null,
+      transitionType: null,
+      transitionQualifiers: []
+    };
+
+    updateNavigationHistory((records) => {
+      const existing = records.find((item) => item.id === record.id);
+      if (existing) {
+        // Chrome may emit another onBeforeRequest for the redirected URL using
+        // the same requestId. Keep the first URL and all redirect hops.
+        existing.currentUrl = details.url;
+        existing.finalUrl = details.url;
+        existing.state = 'loading';
+        return;
+      }
+      records.unshift(record);
+    });
+  },
+  { urls: ['<all_urls>'], types: ['main_frame'] }
+);
+
+chrome.webRequest.onBeforeRedirect.addListener(
+  (details) => {
+    if (details.tabId < 0 || details.frameId !== 0) return;
+
+    updateNavigationHistory((records) => {
+      const record = records.find((item) => item.id === details.requestId);
+      if (!record) return;
+      record.redirects.push({
+        url: details.url,
+        statusCode: details.statusCode,
+        redirectUrl: details.redirectUrl
+      });
+      record.currentUrl = details.redirectUrl;
+      record.finalUrl = details.redirectUrl;
+    });
+  },
+  { urls: ['<all_urls>'], types: ['main_frame'] }
+);
+
+chrome.webRequest.onCompleted.addListener(
+  (details) => {
+    if (details.tabId < 0 || details.frameId !== 0) return;
+
+    updateNavigationHistory((records) => {
+      const record = records.find((item) => item.id === details.requestId);
+      if (!record) return;
+      record.currentUrl = details.url;
+      record.finalUrl = details.url;
+      record.finalStatus = details.statusCode;
+      record.completedAt = details.timeStamp || Date.now();
+      record.state = 'complete';
+    });
+  },
+  { urls: ['<all_urls>'], types: ['main_frame'] }
+);
+
+chrome.webRequest.onErrorOccurred.addListener(
+  (details) => {
+    if (details.tabId < 0 || details.frameId !== 0) return;
+
+    updateNavigationHistory((records) => {
+      const record = records.find((item) => item.id === details.requestId);
+      if (!record) return;
+      record.currentUrl = details.url;
+      record.finalUrl = details.url;
+      record.completedAt = details.timeStamp || Date.now();
+      record.state = 'error';
+      record.error = details.error || 'Navigation failed';
+    });
+  },
+  { urls: ['<all_urls>'], types: ['main_frame'] }
+);
+
+// webNavigation includes commits served from cache where a network response
+// status may not be available. Match commits to their request record when
+// possible, otherwise retain the visit with an unknown HTTP status.
+chrome.webNavigation.onCommitted.addListener((details) => {
+  if (details.tabId < 0 || details.frameId !== 0) return;
+  if (!/^https?:/i.test(details.url)) return;
+
+  updateNavigationHistory((records) => {
+    const committedAt = details.timeStamp || Date.now();
+    const matchingRecord = records
+      .filter((item) => item.tabId === details.tabId && (item.state === 'loading' || (item.completedAt && Math.abs(committedAt - item.completedAt) < 3000)))
+      .sort((a, b) => Math.abs(committedAt - a.startedAt) - Math.abs(committedAt - b.startedAt))
+      .find((item) => item.finalUrl === details.url || item.url === details.url || item.redirects.some((hop) => hop.redirectUrl === details.url));
+
+    if (matchingRecord) {
+      matchingRecord.transitionType = details.transitionType || null;
+      matchingRecord.transitionQualifiers = details.transitionQualifiers || [];
+      matchingRecord.committedAt = committedAt;
+      return;
+    }
+
+    // For history/BFCache commits without an observable HTTP request, store
+    // the visit but leave its HTTP status blank instead of guessing.
+    records.unshift({
+      id: `commit-${details.tabId}-${committedAt}-${Math.random().toString(36).slice(2, 8)}`,
+      tabId: details.tabId,
+      url: details.url,
+      finalUrl: details.url,
+      startedAt: committedAt,
+      completedAt: committedAt,
+      finalStatus: null,
+      redirects: [],
+      state: 'committed',
+      error: null,
+      transitionType: details.transitionType || null,
+      transitionQualifiers: details.transitionQualifiers || []
+    });
+  });
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  updateNavigationHistory((records) => {
+    const index = records.findIndex((item) => item.tabId === tabId);
+    if (index >= 0) records.splice(index, 1);
+  });
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!message || message.type !== 'get-navigation-history') return undefined;
+  navigationQueue
+    .then(() => navigationReady)
+    .then(() => sendResponse({ record: navigationRecords.find((item) => item.tabId === message.tabId) || null }))
+    .catch((error) => sendResponse({ error: error.message || 'Unable to load navigation history' }));
+  return true;
+});
 
 function pruneStale() {
   const now = Date.now();

@@ -629,6 +629,98 @@ footer:empty {
 .no-data { color: #6b5f53; font-style: italic; }
 
 /* ──── Links Tab ──── */
+.visits-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  background: var(--bg-field-label);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+}
+.visits-list {
+  max-height: 435px;
+  overflow-y: auto;
+}
+.visit-item {
+  padding: 10px;
+  margin-bottom: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.visit-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.visit-status, .visit-hop-code {
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding: 3px 6px;
+  text-align: center;
+  font: 700 11px var(--font-mono);
+  border-radius: 4px;
+}
+.visit-status-ok { color: #3d7a4f; background: rgba(74,140,94,0.12); }
+.visit-status-error { color: var(--text-status-error); background: var(--bg-status-error); }
+.visit-status-unknown { color: var(--text-secondary); background: var(--bg-page); }
+.visit-time {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.visit-qualifier {
+  margin-left: 4px;
+  color: var(--primary-dark);
+}
+.visit-original-url, .visit-hop-url {
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font: 12px/1.5 var(--font-mono);
+}
+.visit-redirects {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-page);
+  border-radius: 6px;
+}
+.visit-hop {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.visit-hop-code {
+  min-width: 40px;
+  color: var(--primary-dark);
+  background: var(--primary-faded);
+}
+.visit-final-hop .visit-hop-code { color: #3d7a4f; background: rgba(74,140,94,0.12); }
+.visit-error {
+  margin-top: 6px;
+  color: var(--text-status-error);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.visit-empty {
+  padding: 36px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+}
+.visit-empty .icon { margin-bottom: 8px; font-size: 24px; }
+.visit-empty p { margin: 4px 0; }
+.visit-empty .hint { font-size: 12px; }
 .links-start-card {
   padding: 38px 20px;
   margin-bottom: 10px;
